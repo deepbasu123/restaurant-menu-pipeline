@@ -78,7 +78,7 @@ print(f"Reset tables   : {RESET}")
 # MAGIC %md ## Setup: schema, volume, imports
 
 # COMMAND ----------
-import json, time, socket, ssl, io
+import json, time, socket, ssl, io, re
 import urllib.request, urllib.error, urllib.parse
 from urllib import robotparser
 from html.parser import HTMLParser
@@ -244,6 +244,10 @@ class _Extract(HTMLParser):
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript", "svg") and self._skip:
             self._skip -= 1
+        if tag == "a":
+            # Without this the last href stays live and every later text node on the page
+            # gets recorded as that link's anchor text.
+            self._href = None
     def handle_data(self, data):
         if not self._skip:
             t = data.strip()
@@ -271,7 +275,13 @@ def fetch(url, ua=USER_AGENT, timeout=20, max_bytes=3_000_000):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.status, (r.headers.get_content_type() or ""), r.read(max_bytes)
 
-MENU_HINTS = ("menu", "menus", "dinner", "lunch", "drinks", "food", "eat", "carte")
+# Matched as substrings on purpose, so "seafood", "foodmenu" and "menupage" all count.
+MENU_HINTS = ("menu", "menus", "dinner", "lunch", "drinks", "food", "carte")
+# "eat" is kept separate: as a substring it also matches great, seating, wheat and theatre.
+EAT_RE = re.compile(r"\beat\b")
+
+def looks_like_menu(blob):
+    return any(h in blob for h in MENU_HINTS) or bool(EAT_RE.search(blob))
 
 def pick_menu_candidates(base_url, links):
     """Rank same-site links that look like a menu; keep PDFs and 'menu' pages first."""
@@ -284,7 +294,7 @@ def pick_menu_candidates(base_url, links):
             continue
         blob = f"{href} {text}".lower()
         is_pdf = absu.lower().split("?")[0].endswith(".pdf")
-        if any(h in blob for h in MENU_HINTS) or is_pdf:
+        if looks_like_menu(blob) or is_pdf:
             score = (0 if is_pdf and "menu" in blob else 1 if "menu" in blob else 2)
             if absu not in seen:
                 seen.add(absu)
@@ -484,11 +494,13 @@ if n_src > 0:
     items.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{FQ}.menu_items")
     n_items = spark.table(f"{FQ}.menu_items").count()
 else:
+    # Must match the populated branch column-for-column, including extracted_at, so a run
+    # that finds nothing does not leave downstream queries with a missing column.
     spark.createDataFrame([], T.StructType([
         T.StructField("place_id", T.StringType()), T.StructField("source_url", T.StringType()),
         T.StructField("section", T.StringType()), T.StructField("item_name", T.StringType()),
         T.StructField("description", T.StringType()), T.StructField("price", T.DoubleType()),
-        T.StructField("currency", T.StringType()),
+        T.StructField("currency", T.StringType()), T.StructField("extracted_at", T.TimestampType()),
     ])).write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{FQ}.menu_items")
     n_items = 0
 print(f"Wrote {FQ}.menu_items ({n_items} line items).")
@@ -516,6 +528,9 @@ SELECT r.*,
   CASE
     WHEN r.website_uri IS NULL THEN 'no_website'
     WHEN COALESCE(c.n_items,0) > 0 THEN 'menu_extracted'
+    -- No menu_documents row at all means the site was never attempted, almost always
+    -- because it fell outside max_sites_to_fetch. Distinct from a fetch that found nothing.
+    WHEN d.place_id IS NULL THEN 'not_attempted'
     WHEN COALESCE(d.got_source,0) = 1 THEN 'source_found_no_items'
     WHEN COALESCE(d.blocked,0) = 1 THEN 'robots_blocked'
     WHEN COALESCE(d.failed,0) = 1 THEN 'fetch_failed'

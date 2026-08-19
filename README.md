@@ -42,10 +42,15 @@ browser renders with JavaScript).
 On a real 200-restaurant run across South East QLD, 56 restaurants (about 1 in 4) yielded a
 full structured menu, for 2,355 line items. The rest broke down as: 101 sites returned a page
 but no parseable menu (mostly JavaScript ordering widgets), 25 blocked us in `robots.txt`, 7
-rate-limited or refused the request, 7 had no menu link, and 4 had no website at all. Expect
-roughly a quarter to a third of sites to give you a menu, higher if your target list skews
-toward independent restaurants with classic HTML sites. The `menu_status` column tells you
-exactly what happened for each restaurant:
+rate-limited or refused the request, 7 had no menu link, and 4 had no website at all.
+
+Those figures predate a fix to how menu links are picked off a homepage: the HTML parser used
+to attribute every block of text after a link to that link, which sent the crawler after the
+wrong pages and burned the per-site candidate budget. On a 15-restaurant sample, fixing it took
+the yield from 5 restaurants to 9, and several sites that previously fell back to their homepage
+now return their real menu page. The 200-restaurant numbers above have not been re-measured
+since, so treat them as a floor rather than a current benchmark. The `menu_status` column tells
+you exactly what happened for each restaurant:
 
 | `menu_status` | Meaning |
 |---|---|
@@ -55,6 +60,7 @@ exactly what happened for each restaurant:
 | `fetch_failed` | The site errored or timed out |
 | `no_website` | Places had no website for this restaurant |
 | `no_menu_found` | Fetched, but no menu link and the homepage was too thin |
+| `not_attempted` | The restaurant has a website but we never tried it, because it fell outside `max_sites_to_fetch`. Raise that cap to include it. |
 
 The extraction prompt is written to pull only items that are actually on the page. Where a
 price is not shown, it stores `null` rather than guessing.
@@ -194,7 +200,7 @@ prints a summary at the end.
 | `secret_key` | `google_places_api_key` | Secret key name |
 | `search_queries` | South East QLD suburbs | Comma-separated Places text queries |
 | `target_count` | `200` | How many unique restaurants to gather |
-| `max_sites_to_fetch` | `200` | Cap on sites fetched, to bound time and cost |
+| `max_sites_to_fetch` | `200` | Cap on sites fetched, to bound time and cost. Restaurants past the cap are marked `not_attempted`. |
 | `extraction_model` | `databricks-meta-llama-3-3-70b-instruct` | The model `ai_query` uses to extract menus |
 | `default_currency` | `AUD` | Currency stamped on every price (one region per run) |
 | `reset_tables` | `false` | Drop and rebuild the tables instead of overwriting |
