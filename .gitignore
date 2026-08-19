@@ -1,0 +1,23 @@
+# Databricks sync / bundle state
+.databricks/
+.databricks-login.json
+
+# Local workspace marker (contains your workspace email)
+.wsuser
+
+# Never commit secrets or key material
+*.rtf
+*.key
+*.pem
+.env
+secrets*.json
+**/google*places*key*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
